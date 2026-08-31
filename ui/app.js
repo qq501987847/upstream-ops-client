@@ -7,8 +7,6 @@ const elements = {
   connectButton: document.querySelector("#connect-button"),
   baseURL: document.querySelector("#base-url"),
   apiKey: document.querySelector("#api-key"),
-  profileFile: document.querySelector("#profile-file"),
-  profilePath: document.querySelector("#profile-path"),
   connectionLabel: document.querySelector("#connection-label"),
   refreshButton: document.querySelector("#refresh-button"),
   disconnectButton: document.querySelector("#disconnect-button"),
@@ -32,7 +30,7 @@ let messageTimer
 
 function invoke(command, args) {
   if (!tauriInvoke) {
-    return Promise.reject(new Error("当前页面不在 UpstreamOps Client 桌面运行时中"))
+    return Promise.reject(new Error("当前页面不在火灵连接器桌面运行时中"))
   }
   return tauriInvoke(command, args)
 }
@@ -102,31 +100,44 @@ function renderModels(models, statuses) {
     const statusCell = document.createElement("td")
     statusCell.append(badge(statusLabel(state?.status), state?.status || ""))
 
-    const imageCell = document.createElement("td")
-    imageCell.append(badge(model.supports_images ? "允许" : "关闭", model.supports_images ? "available" : ""))
+    const testCell = document.createElement("td")
+    const testButton = document.createElement("button")
+    testButton.type = "button"
+    testButton.className = "test-button"
+    testButton.textContent = "测试"
+    testButton.title = `测试 ${model.id} 的实际请求连通性`
+    testButton.addEventListener("click", async () => {
+      testButton.disabled = true
+      testButton.textContent = "测试中…"
+      testButton.classList.remove("success", "failure")
+      try {
+        const result = await invoke("test_model", { model: model.id })
+        if (result.success) {
+          testButton.textContent = `成功 ${formatNumber(result.latencyMs, 0)}ms`
+          testButton.classList.add("success")
+          showMessage(`${model.id} 测试成功，延迟 ${formatNumber(result.latencyMs, 0)}ms`)
+        } else {
+          testButton.textContent = "失败"
+          testButton.classList.add("failure")
+          showMessage(`${model.id}：${result.detail}`, true)
+        }
+      } catch (error) {
+        testButton.textContent = "失败"
+        testButton.classList.add("failure")
+        showMessage(errorText(error), true)
+      } finally {
+        testButton.disabled = false
+      }
+    })
+    testCell.append(testButton)
 
-    const toolsCell = document.createElement("td")
-    toolsCell.append(badge(model.supports_tool_call ? "支持" : "关闭", model.supports_tool_call ? "available" : ""))
-
-    const defaultsCell = document.createElement("td")
-    const defaults = model.defaults || {}
-    const values = [`stream=${defaults.stream === true ? "true" : "false"}`]
-    if (defaults.temperature != null) values.push(`temperature=${defaults.temperature}`)
-    if (defaults.top_p != null) values.push(`top_p=${defaults.top_p}`)
-    if (defaults.max_tokens != null) values.push(`max_tokens=${defaults.max_tokens}`)
-    if (defaults.reasoning_effort) values.push(`reasoning=${defaults.reasoning_effort}`)
-    const defaultsCode = document.createElement("code")
-    defaultsCode.textContent = values.join(" · ")
-    defaultsCode.title = defaultsCode.textContent
-    defaultsCell.append(defaultsCode)
-
-    row.append(modelCell, statusCell, imageCell, toolsCell, defaultsCell)
+    row.append(modelCell, statusCell, testCell)
     rows.push(row)
   }
   if (!rows.length) {
     const row = document.createElement("tr")
     const cell = document.createElement("td")
-    cell.colSpan = 5
+    cell.colSpan = 3
     cell.textContent = "当前分组没有可用模型"
     cell.className = "muted"
     row.append(cell)
@@ -200,22 +211,6 @@ elements.connectForm.addEventListener("submit", async (event) => {
   }
 })
 
-elements.profileFile.addEventListener("change", async () => {
-  const file = elements.profileFile.files?.[0]
-  if (!file) return
-  try {
-    const profile = await file.text()
-    const dashboard = await invoke("import_profile", { profile })
-    renderDashboard(dashboard)
-    showMessage("客户端配置已导入")
-    await refresh()
-  } catch (error) {
-    showMessage(errorText(error), true)
-  } finally {
-    elements.profileFile.value = ""
-  }
-})
-
 elements.refreshButton.addEventListener("click", refresh)
 
 elements.workbuddyButton.addEventListener("click", async () => {
@@ -246,12 +241,11 @@ elements.disconnectButton.addEventListener("click", async () => {
 
 async function initialize() {
   if (!tauriInvoke) {
-    showMessage("请通过 UpstreamOps Client 桌面程序打开此页面", true)
+    showMessage("请通过火灵连接器桌面程序打开此页面", true)
     return
   }
   try {
     const info = await invoke("client_info")
-    elements.profilePath.textContent = `本地配置：${info.profilePath}`
     if (!info.configured) {
       showSetup()
       return

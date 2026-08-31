@@ -9,7 +9,7 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::State;
 
@@ -159,6 +159,15 @@ struct ClientInfo {
     configured: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelTestResult {
+    model: String,
+    success: bool,
+    latency_ms: u128,
+    detail: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct WorkBuddyConfig {
@@ -183,8 +192,20 @@ struct WorkBuddyModel {
     supports_tool_call: bool,
     #[serde(rename = "supportsImages")]
     supports_images: bool,
+    #[serde(default = "default_stream")]
+    stream: bool,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
+}
+
+fn default_stream() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorkBuddyFileShape {
+    Object,
+    Array,
 }
 
 fn now_stamp() -> String {
@@ -411,6 +432,8 @@ fn workbuddy_model(profile: &ClientProfile, model: &ClientModel) -> WorkBuddyMod
         url: endpoint(&profile.base_url, "/v1/chat/completions"),
         supports_tool_call: model.supports_tool_call,
         supports_images: model.supports_images,
+        // WorkBuddy should use streaming by default for every imported model.
+        stream: true,
         extra: BTreeMap::new(),
     }
 }
@@ -420,12 +443,27 @@ fn import_workbuddy_file(profile: &ClientProfile, path: &Path) -> Result<ImportR
     if !existed && profile.models.is_empty() {
         return Err("当前分组没有可导入的模型".to_string());
     }
-    let mut config = if existed {
+    let (mut config, shape) = if existed {
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        serde_json::from_slice::<WorkBuddyConfig>(&bytes)
-            .map_err(|error| format!("WorkBuddy 配置格式无效：{error}"))?
+        let value: Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("WorkBuddy 配置格式无效：{error}"))?;
+        if value.is_array() {
+            let models = serde_json::from_value::<Vec<WorkBuddyModel>>(value)
+                .map_err(|error| format!("WorkBuddy 模型配置格式无效：{error}"))?;
+            (
+                WorkBuddyConfig {
+                    models,
+                    ..Default::default()
+                },
+                WorkBuddyFileShape::Array,
+            )
+        } else {
+            let config = serde_json::from_value::<WorkBuddyConfig>(value)
+                .map_err(|error| format!("WorkBuddy 配置格式无效：{error}"))?;
+            (config, WorkBuddyFileShape::Object)
+        }
     } else {
-        WorkBuddyConfig::default()
+        (WorkBuddyConfig::default(), WorkBuddyFileShape::Object)
     };
 
     let incoming = profile
@@ -443,7 +481,7 @@ fn import_workbuddy_file(profile: &ClientProfile, path: &Path) -> Result<ImportR
         }
     }
 
-    if existed {
+    if existed && matches!(shape, WorkBuddyFileShape::Object) {
         // Missing or empty availableModels means "show all" in WorkBuddy. Keep
         // that meaning instead of turning it into a restrictive filter.
         if let Some(ids) = config
@@ -462,7 +500,12 @@ fn import_workbuddy_file(profile: &ClientProfile, path: &Path) -> Result<ImportR
     }
 
     let backup_path = backup_existing(path)?;
-    let bytes = serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?;
+    let output = if matches!(shape, WorkBuddyFileShape::Array) {
+        serde_json::to_value(&config.models).map_err(|error| error.to_string())?
+    } else {
+        serde_json::to_value(&config).map_err(|error| error.to_string())?
+    };
+    let bytes = serde_json::to_vec_pretty(&output).map_err(|error| error.to_string())?;
     atomic_write(path, &bytes)?;
     Ok(ImportResult {
         path: path.display().to_string(),
@@ -557,6 +600,65 @@ async fn refresh_dashboard(state: State<'_, AppState>) -> Result<Dashboard, Stri
 }
 
 #[tauri::command]
+async fn test_model(model: String, state: State<'_, AppState>) -> Result<ModelTestResult, String> {
+    let profile = read_profile_at(&state.profile_path)?;
+    let model_id = model.trim();
+    if model_id.is_empty() {
+        return Err("模型名称不能为空".to_string());
+    }
+    if !profile.models.iter().any(|item| item.id == model_id) {
+        return Err("该模型不在当前 API Key 的可用列表中".to_string());
+    }
+
+    let http = client()?;
+    let payload = serde_json::json!({
+        "model": model_id,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+        "stream": false,
+    });
+    let started = Instant::now();
+    let response = http
+        .post(endpoint(&profile.base_url, "/v1/chat/completions"))
+        .bearer_auth(profile.api_key.trim())
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| format!("请求失败：{error}"))?;
+    let latency_ms = started.elapsed().as_millis();
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("读取响应失败：{error}"))?;
+    if status.is_success() {
+        Ok(ModelTestResult {
+            model: model_id.to_string(),
+            success: true,
+            latency_ms,
+            detail: format!("连接成功，HTTP {}", status.as_u16()),
+        })
+    } else {
+        let excerpt = body
+            .replace(['\n', '\r'], " ")
+            .chars()
+            .take(240)
+            .collect::<String>();
+        Ok(ModelTestResult {
+            model: model_id.to_string(),
+            success: false,
+            latency_ms,
+            detail: if excerpt.is_empty() {
+                format!("上游返回 HTTP {}", status.as_u16())
+            } else {
+                format!("上游返回 HTTP {}：{}", status.as_u16(), excerpt)
+            },
+        })
+    }
+}
+
+#[tauri::command]
 fn import_workbuddy(state: State<'_, AppState>) -> Result<ImportResult, String> {
     let profile = read_profile_at(&state.profile_path)?;
     import_workbuddy_file(&profile, &workbuddy_path())
@@ -583,11 +685,12 @@ pub fn run() {
             load_dashboard,
             client_info,
             refresh_dashboard,
+            test_model,
             import_workbuddy,
             clear_profile,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running UpstreamOps Client");
+        .expect("error while running 火灵连接器");
 }
 
 #[cfg(test)]
@@ -701,6 +804,30 @@ mod tests {
             }
             let _ = fs::remove_dir_all(directory);
         }
+    }
+
+    #[test]
+    fn imports_top_level_workbuddy_model_arrays() {
+        let directory = test_path("array");
+        let path = directory.join("models.json");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            &path,
+            br#"[{"id":"old","name":"Old","vendor":"Other","apiKey":"old","url":"https://old"}]"#,
+        )
+        .unwrap();
+
+        let result = import_workbuddy_file(&sample_profile(), &path).unwrap();
+        assert_eq!(result.total_model_count, 2);
+        let parsed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(parsed.is_array());
+        assert_eq!(parsed[1]["id"], "model-a");
+        assert_eq!(
+            parsed[1]["url"],
+            "https://gateway.example.com/v1/chat/completions"
+        );
+        assert_eq!(parsed[1]["stream"], true);
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]

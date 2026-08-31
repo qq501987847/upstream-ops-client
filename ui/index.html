@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>UpstreamOps Client</title>
+    <title>火灵连接器</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -12,7 +12,7 @@
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">UO</span>
         <div>
-          <strong>UpstreamOps Client</strong>
+          <strong>火灵连接器</strong>
           <span id="connection-label">未连接</span>
         </div>
       </div>
@@ -45,20 +45,6 @@
           </form>
         </div>
 
-        <div class="setup-panel import-panel">
-          <div class="section-heading compact">
-            <span class="section-icon alternate" aria-hidden="true">⇩</span>
-            <div>
-              <h2>导入客户端配置</h2>
-              <p>使用用量查询页面导出的 JSON 文件。</p>
-            </div>
-          </div>
-          <label class="file-picker" for="profile-file">
-            <span>选择 upstreamops-client-profile.json</span>
-            <input id="profile-file" type="file" accept="application/json,.json" />
-          </label>
-          <p id="profile-path" class="path-note"></p>
-        </div>
       </section>
 
       <section id="dashboard-view" hidden>
@@ -104,9 +90,7 @@
                 <tr>
                   <th>模型</th>
                   <th>状态</th>
-                  <th>视觉</th>
-                  <th>工具调用</th>
-                  <th>默认配置</th>
+                  <th>连通测试</th>
                 </tr>
               </thead>
               <tbody id="model-rows"></tbody>

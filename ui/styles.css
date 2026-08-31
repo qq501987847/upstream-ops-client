@@ -166,7 +166,7 @@ code {
 
 .setup-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  grid-template-columns: minmax(0, 760px);
   gap: 16px;
   align-items: stretch;
 }
@@ -416,7 +416,7 @@ input:focus {
 
 table {
   width: 100%;
-  min-width: 720px;
+  min-width: 480px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -443,7 +443,33 @@ th:first-child {
 }
 
 th:last-child {
-  width: 22%;
+  width: 25%;
+}
+
+.test-button {
+  min-width: 64px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 11px;
+}
+
+.test-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.test-button.success {
+  border-color: #91c4aa;
+  color: var(--success);
+}
+
+.test-button.failure {
+  border-color: #d7a2a2;
+  color: var(--danger);
 }
 
 tbody tr:last-child td {

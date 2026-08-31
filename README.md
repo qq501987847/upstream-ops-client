@@ -1,12 +1,12 @@
-# UpstreamOps Client
+# 火灵连接器
 
 这是一个 Rust + Tauri 2 桌面客户端，供网关 API Key 持有者查看余额、请求次数、模型和状态，并把当前 Key 可用的模型合并到 WorkBuddy。
 
 ## 能力
 
-- 通过公开 Base URL 和 API Key 连接，或导入门户下载的 `upstreamops-client-profile.json`
+- 直接使用管理员提供的 Base URL 和 API Key 连接
 - 展示剩余/已用积分、累计请求和近 24 小时请求
-- 获取当前 Key 可见模型、匿名模型状态、视觉开关、工具调用能力和保守的请求默认值
+- 获取当前 Key 可见模型和匿名模型状态，并支持逐模型实际连通测试
 - 合并写入 WorkBuddy 的 `models.json`，同 ID 模型更新，其他模型和未知字段保留
 - 写入现有文件前生成 `models.json.bak-<timestamp>`，Unix 下配置和备份权限设为 `0600`
 
@@ -24,6 +24,8 @@ WorkBuddy 自定义模型目前使用 OpenAI Chat Completions 格式，因此写
 - `GET /v1/portal/account`
 - `GET /v1/portal/models`
 - `GET /v1/status`
+
+模型测试会向当前网关的 `/v1/chat/completions` 发送一个 `max_tokens=1` 的最小请求；这会产生极少量用量，且使用当前 Base URL 和 API Key。
 
 前三个受保护接口使用原始 API Key；客户端不会把 Key 放进 URL。
 
@@ -66,6 +68,8 @@ cargo tauri build --bundles appimage
 - 已有同 ID 模型时更新连接、名称与能力字段，同时保留该模型未识别的自定义字段。
 - 已有其他模型和顶层字段保持不变。
 - 已有 `availableModels` 为非空数组时追加本次模型；缺失或空数组代表 WorkBuddy 的“显示全部”，保持原语义不变。
+- 如果现有 `models.json` 是顶层模型数组，则按数组格式原地合并，不强制改成对象格式。
+- 写入的每个模型统一使用当前 Base URL/API Key，并默认启用 `stream=true`；不猜测或写入思考强度。
 
 ## 凭据安全
 
