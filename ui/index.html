@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>UpstreamOps Client</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">UO</span>
+        <div>
+          <strong>UpstreamOps Client</strong>
+          <span id="connection-label">未连接</span>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="refresh-button" class="icon-button" type="button" title="刷新数据" hidden>↻</button>
+        <button id="disconnect-button" class="quiet-button" type="button" hidden>移除配置</button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section id="setup-view" class="setup-layout">
+        <div class="setup-panel">
+          <div class="section-heading">
+            <span class="section-icon" aria-hidden="true">⌁</span>
+            <div>
+              <h1>连接请求网关</h1>
+              <p>填写管理员提供的 Base URL 和 API Key。</p>
+            </div>
+          </div>
+          <form id="connect-form" class="form-grid">
+            <label>
+              <span>API Base URL</span>
+              <input id="base-url" type="url" inputmode="url" placeholder="https://api.example.com" required />
+            </label>
+            <label>
+              <span>API Key</span>
+              <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." required />
+            </label>
+            <button id="connect-button" class="primary-button" type="submit">连接并获取配置</button>
+          </form>
+        </div>
+
+        <div class="setup-panel import-panel">
+          <div class="section-heading compact">
+            <span class="section-icon alternate" aria-hidden="true">⇩</span>
+            <div>
+              <h2>导入客户端配置</h2>
+              <p>使用用量查询页面导出的 JSON 文件。</p>
+            </div>
+          </div>
+          <label class="file-picker" for="profile-file">
+            <span>选择 upstreamops-client-profile.json</span>
+            <input id="profile-file" type="file" accept="application/json,.json" />
+          </label>
+          <p id="profile-path" class="path-note"></p>
+        </div>
+      </section>
+
+      <section id="dashboard-view" hidden>
+        <div class="connection-strip">
+          <div>
+            <span class="label">当前连接</span>
+            <strong id="dashboard-key">-</strong>
+          </div>
+          <code id="dashboard-base-url">-</code>
+          <span id="refresh-time" class="muted">-</span>
+        </div>
+
+        <div class="metrics" aria-label="用量概览">
+          <article class="metric accent">
+            <span>剩余积分</span>
+            <strong id="remaining-points">-</strong>
+          </article>
+          <article class="metric">
+            <span>累计已用</span>
+            <strong id="used-points">-</strong>
+          </article>
+          <article class="metric">
+            <span>总请求数</span>
+            <strong id="total-requests">-</strong>
+          </article>
+          <article class="metric">
+            <span>近 24 小时请求</span>
+            <strong id="last24-requests">-</strong>
+          </article>
+        </div>
+
+        <section class="data-section">
+          <div class="section-title-row">
+            <div>
+              <h2>可用模型</h2>
+              <span id="model-count" class="muted">0 个模型</span>
+            </div>
+            <span id="model-warning" class="inline-warning" hidden></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>模型</th>
+                  <th>状态</th>
+                  <th>视觉</th>
+                  <th>工具调用</th>
+                  <th>默认配置</th>
+                </tr>
+              </thead>
+              <tbody id="model-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="workbuddy-section">
+          <div>
+            <span class="eyebrow">WORKBUDDY</span>
+            <h2>写入本地模型配置</h2>
+            <code id="workbuddy-path">~/.workbuddy/models.json</code>
+          </div>
+          <div class="workbuddy-actions">
+            <button id="workbuddy-button" class="primary-button" type="button">导入 WorkBuddy</button>
+            <span id="workbuddy-result" class="muted"></span>
+          </div>
+        </section>
+      </section>
+
+      <div id="message" class="message" role="status" hidden></div>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

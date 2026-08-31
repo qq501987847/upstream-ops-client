@@ -1,0 +1,16 @@
+# Rust / Tauri build output
+/target/
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/release-artifacts/
+
+# Local and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Credentials and local profiles
+*.local
+*.secret
