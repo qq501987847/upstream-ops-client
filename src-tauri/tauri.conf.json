@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "火灵连接器",
+  "productName": "火灵 API 客户端",
   "version": "0.1.0",
   "identifier": "com.upstreamops.workbuddy",
   "build": {
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "火灵连接器",
+        "title": "火灵 API 客户端",
         "width": 960,
         "height": 720,
         "minWidth": 420,

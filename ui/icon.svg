@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="火灵 API">
+  <rect width="64" height="64" rx="14" fill="#101212"/>
+  <path d="M33 6c2 11-5 15-5 22 0 4 2 7 6 8 4-3 5-8 3-13 8 7 12 15 10 23-2 10-9 15-18 15-10 0-18-7-18-17 0-8 5-14 12-20 3-3 7-9 10-18Z" fill="#d8ff52"/>
+  <path d="M34 29c-4 5-7 9-7 14 0 4 3 7 7 7 5 0 8-4 8-8 0-4-3-8-8-13Z" fill="#ff713d"/>
+  <circle cx="48" cy="13" r="3" fill="#f2efe7"/>
+</svg>

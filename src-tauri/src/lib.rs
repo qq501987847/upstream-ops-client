@@ -113,6 +113,8 @@ struct ClientProfile {
     generated_at: String,
     base_url: String,
     api_key: String,
+    user_id: i64,
+    access_token: String,
     key_name: String,
     key_prefix: String,
     points_per_usd: f64,
@@ -129,6 +131,8 @@ struct ClientProfile {
 struct Dashboard {
     connected: bool,
     base_url: String,
+    user_id: i64,
+    access_token_configured: bool,
     key_name: String,
     key_prefix: String,
     points_per_usd: f64,
@@ -166,6 +170,74 @@ struct ModelTestResult {
     success: bool,
     latency_ms: u128,
     detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RedeemCodeResult {
+    quota: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct PortalAccountData {
+    object: String,
+    key_name: String,
+    key_prefix: String,
+    #[serde(default)]
+    quota: f64,
+    #[serde(default)]
+    used_quota: f64,
+    usage: Option<PortalUsage>,
+    models: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct DisplayConfig {
+    quota_display_type: String,
+    quota_per_unit: f64,
+    usd_exchange_rate: f64,
+    custom_currency_exchange_rate: f64,
+}
+
+impl DisplayConfig {
+    fn factor(&self) -> f64 {
+        let quota_per_unit = if self.quota_per_unit > 0.0 {
+            self.quota_per_unit
+        } else {
+            500_000.0
+        };
+        let display_type = self.quota_display_type.trim().to_ascii_uppercase();
+        let exchange_rate = match display_type.as_str() {
+            "TOKENS" => quota_per_unit,
+            "USD" => 1.0,
+            "CUSTOM" => {
+                if self.custom_currency_exchange_rate > 0.0 {
+                    self.custom_currency_exchange_rate
+                } else {
+                    1.0
+                }
+            }
+            _ => {
+                if self.usd_exchange_rate > 0.0 {
+                    self.usd_exchange_rate
+                } else {
+                    1.0
+                }
+            }
+        };
+        exchange_rate / quota_per_unit
+    }
+
+    fn points_per_usd(&self) -> f64 {
+        self.factor()
+            * if self.quota_per_unit > 0.0 {
+                self.quota_per_unit
+            } else {
+                500_000.0
+            }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -339,6 +411,153 @@ fn endpoint(base_url: &str, path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
 
+fn portal_models(values: &[Value], base_url: &str) -> Vec<ClientModel> {
+    let chat_url = endpoint(base_url, "/v1/chat/completions");
+    values
+        .iter()
+        .filter_map(|value| {
+            let id = value
+                .as_str()
+                .or_else(|| value.get("id").and_then(Value::as_str))?
+                .trim();
+            if id.is_empty() {
+                return None;
+            }
+            Some(ClientModel {
+                id: id.to_string(),
+                name: value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id)
+                    .to_string(),
+                vendor: value
+                    .get("vendor")
+                    .and_then(Value::as_str)
+                    .unwrap_or("默认服务")
+                    .to_string(),
+                chat_completions_url: chat_url.clone(),
+                supports_tool_call: value
+                    .get("supports_tool_call")
+                    .or_else(|| value.get("supportsToolCall"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                supports_images: value
+                    .get("supports_images")
+                    .or_else(|| value.get("supportsImages"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                defaults: RequestDefaults::default(),
+            })
+        })
+        .collect()
+}
+
+fn profile_from_account(
+    base_url: String,
+    api_key: String,
+    user_id: i64,
+    access_token: String,
+    payload: Value,
+    display_config: &DisplayConfig,
+) -> Result<ClientProfile, String> {
+    if payload.get("success").and_then(Value::as_bool) == Some(false) {
+        return Err("账户认证失败，请检查服务地址和访问凭据".to_string());
+    }
+    let data = payload
+        .get("data")
+        .cloned()
+        .ok_or_else(|| "账户响应缺少 data".to_string())?;
+    let account: PortalAccountData =
+        serde_json::from_value(data).map_err(|error| format!("账户响应格式无效：{error}"))?;
+    let user_remaining = account.quota.max(0.0);
+    let user_used = account.used_quota.max(0.0);
+    let factor = display_config.factor();
+    let balance = Balance {
+        limited: true,
+        // New API's user.quota is already the remaining user balance.
+        quota_points: Some(user_remaining * factor),
+        used_points: user_used * factor,
+        remaining_points: Some(user_remaining * factor),
+        ..Default::default()
+    };
+    let models = portal_models(&account.models, &base_url);
+    let mut profile = ClientProfile {
+        object: PROFILE_OBJECT.to_string(),
+        version: PROFILE_VERSION,
+        generated_at: now_marker(),
+        base_url,
+        api_key,
+        user_id,
+        access_token,
+        key_name: account.key_name,
+        key_prefix: account.key_prefix,
+        points_per_usd: display_config.points_per_usd(),
+        balance,
+        usage: account.usage,
+        models,
+        available_models: Vec::new(),
+        api: ApiEndpoints {
+            models: "/v1/models".to_string(),
+            usage: "/v1/portal/account".to_string(),
+            chat_completions: "/v1/chat/completions".to_string(),
+            responses: "/v1/responses".to_string(),
+            anthropic_messages: "/v1/messages".to_string(),
+        },
+        defaults: RequestDefaults::default(),
+    };
+    canonicalize_profile(&mut profile)?;
+    Ok(profile)
+}
+
+async fn fetch_account(http: &Client, base_url: &str, api_key: &str) -> Result<Value, String> {
+    get_json(
+        http,
+        &endpoint(base_url, "/v1/portal/account"),
+        Some(api_key),
+    )
+    .await
+}
+
+async fn fetch_display_config(http: &Client, base_url: &str) -> Result<DisplayConfig, String> {
+    let payload: Value = get_json(http, &endpoint(base_url, "/api/status"), None).await?;
+    let data = payload.get("data").cloned().unwrap_or(payload);
+    serde_json::from_value(data).map_err(|error| format!("展示配置格式无效：{error}"))
+}
+
+async fn bootstrap_api_key(
+    http: &Client,
+    base_url: &str,
+    user_id: i64,
+    access_token: &str,
+) -> Result<String, String> {
+    let response = http
+        .post(endpoint(base_url, "/v1/portal/bootstrap"))
+        .header("Accept", "application/json")
+        .header("Authorization", access_token)
+        .header("New-Api-User", user_id.to_string())
+        .send()
+        .await
+        .map_err(|error| format!("获取 API Key 失败：{error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("读取 API Key 响应失败：{error}"))?;
+    let payload: Value =
+        serde_json::from_str(&body).map_err(|error| format!("API Key 响应格式无效：{error}"))?;
+    if !status.is_success() || payload.get("success").and_then(Value::as_bool) == Some(false) {
+        return Err(format!("获取 API Key 失败（HTTP {}）", status.as_u16()));
+    }
+    payload
+        .get("data")
+        .and_then(|data| data.get("api_key"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "获取 API Key 响应缺少 api_key".to_string())
+}
+
 fn client() -> Result<Client, String> {
     Client::builder()
         .user_agent("upstreamops-workbuddy/0.1")
@@ -385,6 +604,8 @@ fn profile_to_dashboard(
     Dashboard {
         connected: true,
         base_url: profile.base_url.clone(),
+        user_id: profile.user_id,
+        access_token_configured: !profile.access_token.trim().is_empty(),
         key_name: profile.key_name.clone(),
         key_prefix: profile.key_prefix.clone(),
         points_per_usd: profile.points_per_usd,
@@ -428,7 +649,7 @@ fn workbuddy_model(profile: &ClientProfile, model: &ClientModel) -> WorkBuddyMod
         },
         api_key: profile.api_key.clone(),
         // Never trust a profile-supplied per-model URL with a live API key.
-        // WorkBuddy always calls the validated gateway Base URL.
+        // WorkBuddy always calls the validated New API Base URL.
         url: endpoint(&profile.base_url, "/v1/chat/completions"),
         supports_tool_call: model.supports_tool_call,
         supports_images: model.supports_images,
@@ -524,20 +745,45 @@ fn import_workbuddy_file(profile: &ClientProfile, path: &Path) -> Result<ImportR
 async fn connect(
     base_url: String,
     api_key: String,
+    user_id: Option<i64>,
+    access_token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Dashboard, String> {
     let base_url = normalize_base_url(&base_url)?;
-    let api_key = api_key.trim().to_string();
+    let mut api_key = api_key.trim().to_string();
+    let user_id = user_id.unwrap_or_default();
+    let access_token = access_token.unwrap_or_default().trim().to_string();
+    if api_key.is_empty() && (user_id <= 0 || access_token.is_empty()) {
+        return Err("请输入 API Key，或同时填写用户 ID和系统访问令牌".to_string());
+    }
+    let http = client()?;
+    if api_key.is_empty() {
+        api_key = bootstrap_api_key(&http, &base_url, user_id, &access_token).await?;
+    }
     if api_key.is_empty() {
         return Err("请输入 API Key".to_string());
     }
-    let http = client()?;
-    let url = endpoint(&base_url, "/v1/portal/client-config");
-    let mut profile: ClientProfile = get_json(&http, &url, Some(&api_key)).await?;
-    // Keep the credential the user entered; a remote response cannot replace it.
-    profile.api_key = api_key;
-    profile.base_url = base_url;
-    canonicalize_profile(&mut profile)?;
+    let display_config = fetch_display_config(&http, &base_url)
+        .await
+        .unwrap_or_default();
+    let payload = fetch_account(&http, &base_url, &api_key).await?;
+    let (stored_user_id, stored_access_token) = read_profile_at(&state.profile_path)
+        .ok()
+        .filter(|current| current.api_key == api_key && current.base_url == base_url)
+        .map(|current| (current.user_id, current.access_token))
+        .unwrap_or_default();
+    let profile = profile_from_account(
+        base_url,
+        api_key,
+        if user_id > 0 { user_id } else { stored_user_id },
+        if access_token.is_empty() {
+            stored_access_token
+        } else {
+            access_token
+        },
+        payload,
+        &display_config,
+    )?;
     save_profile_at(&state.profile_path, &profile)?;
     Ok(profile_to_dashboard(&profile, Vec::new(), None))
 }
@@ -571,28 +817,31 @@ async fn refresh_dashboard(state: State<'_, AppState>) -> Result<Dashboard, Stri
     let current = read_profile_at(&state.profile_path)?;
     let http = client()?;
 
-    // client-config is the authoritative snapshot for balance, usage, model
-    // capabilities, and defaults. Fetching only /portal/models would lose a
-    // newly enabled model's vision flag until the user reconnects manually.
     let base_url = normalize_base_url(&current.base_url)?;
     let api_key = current.api_key.trim().to_string();
-    let mut profile: ClientProfile = get_json(
-        &http,
-        &endpoint(&base_url, "/v1/portal/client-config"),
-        Some(&api_key),
-    )
-    .await?;
-    profile.base_url = base_url;
-    profile.api_key = api_key;
-    canonicalize_profile(&mut profile)?;
+    let display_config = fetch_display_config(&http, &base_url)
+        .await
+        .unwrap_or_default();
+    let payload = fetch_account(&http, &base_url, &api_key).await?;
+    let mut profile = profile_from_account(
+        base_url,
+        api_key,
+        current.user_id,
+        current.access_token,
+        payload,
+        &display_config,
+    )?;
 
-    let (status, status_error) =
-        match get_json::<StatusResponse>(&http, &endpoint(&profile.base_url, "/v1/status"), None)
-            .await
-        {
-            Ok(payload) => (payload.models, None),
-            Err(error) => (Vec::new(), Some(error)),
-        };
+    let (status, status_error) = match get_json::<StatusResponse>(
+        &http,
+        &endpoint(&profile.base_url, "/v1/portal/status"),
+        None,
+    )
+    .await
+    {
+        Ok(payload) => (payload.models, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
 
     profile.generated_at = now_marker();
     save_profile_at(&state.profile_path, &profile)?;
@@ -659,6 +908,52 @@ async fn test_model(model: String, state: State<'_, AppState>) -> Result<ModelTe
 }
 
 #[tauri::command]
+async fn redeem_code(code: String, state: State<'_, AppState>) -> Result<RedeemCodeResult, String> {
+    let code = code.trim();
+    if code.is_empty() {
+        return Err("请输入兑换码".to_string());
+    }
+    let profile = read_profile_at(&state.profile_path)?;
+    if profile.access_token.trim().is_empty() {
+        return Err("当前配置没有系统访问令牌".to_string());
+    }
+    let http = client()?;
+    let response = http
+        .post(endpoint(&profile.base_url, "/api/user/topup"))
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .bearer_auth(profile.access_token.trim())
+        .json(&serde_json::json!({ "key": code }))
+        .send()
+        .await
+        .map_err(|error| format!("兑换请求失败：{error}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("读取兑换响应失败：{error}"))?;
+    let payload: Value =
+        serde_json::from_str(&body).map_err(|error| format!("兑换响应格式无效：{error}"))?;
+    if !status.is_success() || payload.get("success").and_then(Value::as_bool) == Some(false) {
+        let excerpt = body
+            .replace(['\n', '\r'], " ")
+            .chars()
+            .take(240)
+            .collect::<String>();
+        return Err(if excerpt.is_empty() {
+            format!("服务返回 HTTP {}", status.as_u16())
+        } else {
+            format!("服务返回 HTTP {}：{}", status.as_u16(), excerpt)
+        });
+    }
+    let quota = payload
+        .get("data")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "兑换响应缺少额度".to_string())?;
+    Ok(RedeemCodeResult { quota })
+}
+
+#[tauri::command]
 fn import_workbuddy(state: State<'_, AppState>) -> Result<ImportResult, String> {
     let profile = read_profile_at(&state.profile_path)?;
     import_workbuddy_file(&profile, &workbuddy_path())
@@ -686,11 +981,12 @@ pub fn run() {
             client_info,
             refresh_dashboard,
             test_model,
+            redeem_code,
             import_workbuddy,
             clear_profile,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running 火灵连接器");
+        .expect("error while running New API 客户端");
 }
 
 #[cfg(test)]
@@ -701,13 +997,13 @@ mod tests {
         ClientProfile {
             object: PROFILE_OBJECT.to_string(),
             version: PROFILE_VERSION,
-            base_url: "https://gateway.example.com/".to_string(),
+            base_url: "https://new-api.example.com/".to_string(),
             api_key: "sk-test".to_string(),
             models: vec![ClientModel {
                 id: "model-a".to_string(),
                 name: "model-a".to_string(),
                 vendor: "UpstreamOps".to_string(),
-                chat_completions_url: "https://gateway.example.com/v1/chat/completions".to_string(),
+                chat_completions_url: "https://new-api.example.com/v1/chat/completions".to_string(),
                 supports_tool_call: true,
                 supports_images: true,
                 defaults: RequestDefaults {
@@ -739,7 +1035,41 @@ mod tests {
     }
 
     #[test]
-    fn canonicalizes_untrusted_model_urls_to_the_gateway() {
+    fn dashboard_balance_uses_user_quota_not_token_quota() {
+        let payload = serde_json::json!({
+            "success": true,
+            "data": {
+                "key_name": "Portal API Key",
+                "key_prefix": "sk-abcd",
+                "quota": 1_000_000,
+                "used_quota": 125_000,
+                "remain_quota": 10_000,
+                "used_token_quota": 2_000,
+                "models": []
+            }
+        });
+        let display_config = DisplayConfig {
+            quota_display_type: "CUSTOM".to_string(),
+            quota_per_unit: 500_000.0,
+            custom_currency_exchange_rate: 600.0,
+            ..Default::default()
+        };
+        let profile = profile_from_account(
+            "https://example.com".to_string(),
+            "sk-test".to_string(),
+            42,
+            "system-token".to_string(),
+            payload,
+            &display_config,
+        )
+        .unwrap();
+        assert_eq!(profile.balance.quota_points, Some(1200.0));
+        assert_eq!(profile.balance.used_points, 150.0);
+        assert_eq!(profile.balance.remaining_points, Some(1200.0));
+    }
+
+    #[test]
+    fn canonicalizes_untrusted_model_urls_to_new_api() {
         let mut profile = sample_profile();
         profile.models[0].chat_completions_url = "https://attacker.example/collect-key".to_string();
         profile.models.push(profile.models[0].clone());
@@ -752,7 +1082,7 @@ mod tests {
         assert_eq!(profile.available_models, vec!["model-a"]);
         assert_eq!(
             profile.models[0].chat_completions_url,
-            "https://gateway.example.com/v1/chat/completions"
+            "https://new-api.example.com/v1/chat/completions"
         );
 
         let directory = test_path("untrusted-url");
@@ -761,7 +1091,7 @@ mod tests {
         let parsed: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(
             parsed["models"][0]["url"],
-            "https://gateway.example.com/v1/chat/completions"
+            "https://new-api.example.com/v1/chat/completions"
         );
         let _ = fs::remove_dir_all(directory);
     }
@@ -824,7 +1154,7 @@ mod tests {
         assert_eq!(parsed[1]["id"], "model-a");
         assert_eq!(
             parsed[1]["url"],
-            "https://gateway.example.com/v1/chat/completions"
+            "https://new-api.example.com/v1/chat/completions"
         );
         assert_eq!(parsed[1]["stream"], true);
         let _ = fs::remove_dir_all(directory);
@@ -840,7 +1170,7 @@ mod tests {
         assert_eq!(parsed["availableModels"], serde_json::json!(["model-a"]));
         assert_eq!(
             parsed["models"][0]["url"],
-            "https://gateway.example.com/v1/chat/completions"
+            "https://new-api.example.com/v1/chat/completions"
         );
         let _ = fs::remove_dir_all(directory);
     }

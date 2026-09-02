@@ -1,16 +1,91 @@
 const tauriInvoke = window.__TAURI__?.core?.invoke
+const query = new URLSearchParams(window.location.search)
+// Browser development mode is intentionally opt-in and never active in Tauri.
+const developmentMode = !tauriInvoke && query.get("dev") === "1"
+
+const developmentState = {
+  dashboard: null,
+}
+
+function developmentDashboard(baseUrl = "http://127.0.0.1:3000", apiKey = "sk-dev") {
+  const models = [
+    { id: "dev-chat", name: "开发对话模型", vendor: "开发环境", supportsToolCall: true, supportsImages: false },
+    { id: "dev-vision", name: "开发视觉模型", vendor: "开发环境", supportsToolCall: true, supportsImages: true },
+  ]
+  return {
+    connected: true,
+    baseUrl,
+    keyName: "开发模式 API Key",
+    keyPrefix: `${apiKey.slice(0, 8)}…`,
+    userId: 10001,
+    accessTokenConfigured: true,
+    pointsPerUsd: 1,
+    balance: { limited: true, remaining_points: 1280, used_points: 320 },
+    usage: { total_requests: 42, last_24h_requests: 7 },
+    models,
+    status: models.map((model) => ({ model: model.id, status: "available", latency_band: "fast" })),
+    statusError: null,
+    workbuddyPath: "开发模式不会写入本机 WorkBuddy 配置",
+    refreshedAt: `unix:${Math.floor(Date.now() / 1000)}`,
+  }
+}
+
+function developmentInvoke(command, args = {}) {
+  switch (command) {
+    case "client_info":
+      return { profilePath: "开发模式内存配置", workbuddyPath: "开发模式不会写入本机配置", configured: Boolean(developmentState.dashboard) }
+    case "load_dashboard":
+      if (!developmentState.dashboard) throw new Error("开发模式尚未连接")
+      return developmentState.dashboard
+    case "connect":
+      developmentState.dashboard = developmentDashboard(args.baseUrl, args.apiKey)
+      return developmentState.dashboard
+    case "refresh_dashboard":
+      if (!developmentState.dashboard) throw new Error("开发模式尚未连接")
+      developmentState.dashboard = { ...developmentState.dashboard, refreshedAt: `unix:${Math.floor(Date.now() / 1000)}` }
+      return developmentState.dashboard
+    case "test_model":
+      return { model: args.model, success: true, latencyMs: 18, detail: "开发模式模拟成功" }
+    case "redeem_code":
+      if (!args.code?.trim()) throw new Error("请输入兑换码")
+      if (developmentState.dashboard) {
+        developmentState.dashboard = {
+          ...developmentState.dashboard,
+          balance: {
+            ...developmentState.dashboard.balance,
+            remaining_points: (developmentState.dashboard.balance?.remaining_points ?? 0) + 100000,
+          },
+        }
+      }
+      return { quota: 100000 }
+    case "import_workbuddy":
+      return { path: "开发模式不会写入本机 WorkBuddy 配置", backupPath: null, modelCount: developmentState.dashboard?.models.length ?? 0, totalModelCount: developmentState.dashboard?.models.length ?? 0, availableModelCount: developmentState.dashboard?.models.length ?? 0 }
+    case "clear_profile":
+      developmentState.dashboard = null
+      return null
+    default:
+      throw new Error(`开发模式不支持命令：${command}`)
+  }
+}
 
 const elements = {
+  homeView: document.querySelector("#home-view"),
   setupView: document.querySelector("#setup-view"),
   dashboardView: document.querySelector("#dashboard-view"),
+  rechargeView: document.querySelector("#recharge-view"),
+  navItems: [...document.querySelectorAll("[data-view]")],
   connectForm: document.querySelector("#connect-form"),
   connectButton: document.querySelector("#connect-button"),
   baseURL: document.querySelector("#base-url"),
   apiKey: document.querySelector("#api-key"),
+  userId: document.querySelector("#user-id"),
+  accessToken: document.querySelector("#access-token"),
+  setupDescription: document.querySelector("#setup-description"),
   connectionLabel: document.querySelector("#connection-label"),
   refreshButton: document.querySelector("#refresh-button"),
   disconnectButton: document.querySelector("#disconnect-button"),
   dashboardKey: document.querySelector("#dashboard-key"),
+  dashboardUser: document.querySelector("#dashboard-user"),
   dashboardBaseURL: document.querySelector("#dashboard-base-url"),
   refreshTime: document.querySelector("#refresh-time"),
   remainingPoints: document.querySelector("#remaining-points"),
@@ -24,13 +99,21 @@ const elements = {
   workbuddyButton: document.querySelector("#workbuddy-button"),
   workbuddyResult: document.querySelector("#workbuddy-result"),
   message: document.querySelector("#message"),
+  developmentBadge: document.querySelector("#development-badge"),
+  redeemForm: document.querySelector("#redeem-form"),
+  redeemCode: document.querySelector("#redeem-code"),
+  redeemButton: document.querySelector("#redeem-button"),
+  redeemResult: document.querySelector("#redeem-result"),
+  purchaseButton: document.querySelector("#purchase-button"),
+  purchaseResult: document.querySelector("#purchase-result"),
 }
 
 let messageTimer
 
 function invoke(command, args) {
   if (!tauriInvoke) {
-    return Promise.reject(new Error("当前页面不在火灵连接器桌面运行时中"))
+    if (developmentMode) return Promise.resolve().then(() => developmentInvoke(command, args))
+    return Promise.reject(new Error("请通过火灵 API 客户端桌面程序打开此页面"))
   }
   return tauriInvoke(command, args)
 }
@@ -147,12 +230,19 @@ function renderModels(models, statuses) {
 }
 
 function renderDashboard(dashboard) {
+  window.__currentDashboard = dashboard
+  setView("home")
+  elements.homeView.hidden = false
+  elements.rechargeView.hidden = true
   elements.setupView.hidden = true
   elements.dashboardView.hidden = false
   elements.refreshButton.hidden = false
   elements.disconnectButton.hidden = false
   elements.connectionLabel.textContent = `${dashboard.keyName || "API Key"} · ${dashboard.keyPrefix || "已连接"}`
   elements.dashboardKey.textContent = `${dashboard.keyName || "API Key"} ${dashboard.keyPrefix || ""}`.trim()
+  elements.dashboardUser.textContent = dashboard.userId > 0
+    ? `用户 ID ${dashboard.userId} · 系统令牌${dashboard.accessTokenConfigured ? "已保存" : "未配置"}`
+    : "用户 ID 未提供"
   elements.dashboardBaseURL.textContent = dashboard.baseUrl
   elements.dashboardBaseURL.title = dashboard.baseUrl
   elements.refreshTime.textContent = formatRefreshTime(dashboard.refreshedAt)
@@ -170,13 +260,23 @@ function renderDashboard(dashboard) {
 }
 
 function showSetup() {
+  setView("home")
+  elements.homeView.hidden = false
+  elements.rechargeView.hidden = true
   elements.setupView.hidden = false
   elements.dashboardView.hidden = true
   elements.refreshButton.hidden = true
   elements.disconnectButton.hidden = true
   elements.connectionLabel.textContent = "未连接"
-  elements.apiKey.value = ""
+  if (!developmentMode) elements.apiKey.value = ""
   elements.workbuddyResult.textContent = ""
+}
+
+function setView(view) {
+  const recharge = view === "recharge"
+  elements.homeView.hidden = recharge
+  elements.rechargeView.hidden = !recharge
+  elements.navItems.forEach((item) => item.classList.toggle("active", item.dataset.view === view))
 }
 
 async function refresh() {
@@ -197,11 +297,19 @@ elements.connectForm.addEventListener("submit", async (event) => {
   event.preventDefault()
   const baseUrl = elements.baseURL.value.trim()
   const apiKey = elements.apiKey.value.trim()
-  if (!baseUrl || !apiKey) return
+  const userId = elements.userId.value.trim()
+  const accessToken = elements.accessToken.value.trim()
+  if (!baseUrl || !userId || !accessToken) return
   setBusy(elements.connectButton, true, "连接中…", "连接并获取配置")
   try {
-    const dashboard = await invoke("connect", { baseUrl, apiKey })
+    const dashboard = await invoke("connect", {
+      baseUrl,
+      apiKey,
+      userId: userId ? Number(userId) : null,
+      accessToken: accessToken || null,
+    })
     elements.apiKey.value = ""
+    elements.accessToken.value = ""
     renderDashboard(dashboard)
     await refresh()
   } catch (error) {
@@ -239,9 +347,52 @@ elements.disconnectButton.addEventListener("click", async () => {
   }
 })
 
+elements.navItems.forEach((item) => {
+  item.addEventListener("click", () => setView(item.dataset.view))
+})
+
+elements.redeemForm.addEventListener("submit", async (event) => {
+  event.preventDefault()
+  const code = elements.redeemCode.value.trim()
+  if (!code) return
+  setBusy(elements.redeemButton, true, "兑换中…", "兑换并刷新额度")
+  elements.redeemResult.textContent = ""
+  try {
+    const result = await invoke("redeem_code", { code })
+    const dashboard = await invoke("refresh_dashboard")
+    elements.redeemCode.value = ""
+    elements.redeemResult.textContent = `兑换成功，已增加 ${formatNumber(result.quota, 0)} 点额度。`
+    renderDashboard(dashboard)
+    showMessage("兑换成功，账户额度已更新")
+  } catch (error) {
+    elements.redeemResult.textContent = errorText(error)
+    showMessage(errorText(error), true)
+  } finally {
+    setBusy(elements.redeemButton, false, "兑换中…", "兑换并刷新额度")
+  }
+})
+
+elements.purchaseButton.addEventListener("click", () => {
+  const shopUrl = elements.purchaseButton.dataset.url?.trim()
+  if (!shopUrl) {
+    elements.purchaseResult.textContent = "云猫寄售正在上架，购买链接开放后会显示在这里。"
+    return
+  }
+  window.open(shopUrl, "_blank", "noopener,noreferrer")
+})
+
 async function initialize() {
-  if (!tauriInvoke) {
-    showMessage("请通过火灵连接器桌面程序打开此页面", true)
+  elements.developmentBadge.hidden = !developmentMode
+  if (developmentMode) {
+    elements.baseURL.value = "http://127.0.0.1:3000"
+    elements.apiKey.value = "sk-development"
+    elements.userId.value = "10001"
+    elements.accessToken.value = "dev-system-token"
+    elements.setupDescription.textContent = "已启用本地模拟数据，可直接点击连接验证获取配置流程。"
+    elements.purchaseResult.textContent = "开发模式：云猫寄售链接尚未配置。"
+  }
+  if (!tauriInvoke && !developmentMode) {
+    showMessage("请通过火灵 API 客户端桌面程序打开此页面", true)
     return
   }
   try {

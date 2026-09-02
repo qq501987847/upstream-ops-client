@@ -3,33 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
-    <title>火灵连接器</title>
+    <meta name="color-scheme" content="light" />
+    <title>火灵 API 客户端</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">UO</span>
+        <img class="brand-mark" src="./icon.svg" alt="" aria-hidden="true" />
         <div>
-          <strong>火灵连接器</strong>
+          <strong>火灵 API</strong>
+          <small>客户端</small>
           <span id="connection-label">未连接</span>
         </div>
       </div>
+      <nav class="primary-nav" aria-label="主菜单">
+        <button class="nav-item active" type="button" data-view="home">主页</button>
+        <button class="nav-item" type="button" data-view="recharge">充值与兑换</button>
+      </nav>
       <div class="top-actions">
+        <span id="development-badge" class="development-badge" hidden>开发模式</span>
         <button id="refresh-button" class="icon-button" type="button" title="刷新数据" hidden>↻</button>
         <button id="disconnect-button" class="quiet-button" type="button" hidden>移除配置</button>
       </div>
     </header>
 
     <main class="shell">
+      <section id="home-view">
       <section id="setup-view" class="setup-layout">
         <div class="setup-panel">
           <div class="section-heading">
             <span class="section-icon" aria-hidden="true">⌁</span>
             <div>
-              <h1>连接请求网关</h1>
-              <p>填写管理员提供的 Base URL 和 API Key。</p>
+              <h1>连接服务</h1>
+              <p id="setup-description">填写服务地址、用户 ID 和系统访问令牌，客户端会自动获取 API Key。</p>
             </div>
           </div>
           <form id="connect-form" class="form-grid">
@@ -38,8 +45,17 @@
               <input id="base-url" type="url" inputmode="url" placeholder="https://api.example.com" required />
             </label>
             <label>
-              <span>API Key</span>
-              <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." required />
+              <span>API Key（自动获取）</span>
+              <input id="api-key" type="hidden" autocomplete="off" />
+              <small class="muted">连接后自动获取，不需要手动填写。</small>
+            </label>
+            <label>
+              <span>用户 ID（可选）</span>
+              <input id="user-id" type="number" min="1" inputmode="numeric" placeholder="预创建账户填写" required />
+            </label>
+            <label>
+              <span>系统访问令牌（可选）</span>
+              <input id="access-token" type="password" autocomplete="off" spellcheck="false" placeholder="与用户 ID 配套" required />
             </label>
             <button id="connect-button" class="primary-button" type="submit">连接并获取配置</button>
           </form>
@@ -52,6 +68,7 @@
           <div>
             <span class="label">当前连接</span>
             <strong id="dashboard-key">-</strong>
+            <span id="dashboard-user" class="muted">用户 ID 未提供</span>
           </div>
           <code id="dashboard-base-url">-</code>
           <span id="refresh-time" class="muted">-</span>
@@ -109,6 +126,51 @@
             <span id="workbuddy-result" class="muted"></span>
           </div>
         </section>
+      </section>
+      </section>
+
+      <section id="recharge-view" class="recharge-layout" hidden>
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow">ACCOUNT</span>
+            <h1>充值与兑换</h1>
+            <p>管理 API Key 和调用额度。</p>
+          </div>
+        </div>
+
+        <div class="recharge-grid">
+          <section class="setup-panel action-panel">
+            <div class="section-heading">
+              <span class="section-icon" aria-hidden="true">⌁</span>
+              <div>
+                <h2>兑换额度</h2>
+                <p>输入云猫购买的普通兑换码，使用系统令牌给当前账户增加额度。</p>
+              </div>
+            </div>
+            <form id="redeem-form" class="form-grid">
+              <label>
+                <span>兑换码</span>
+                <input id="redeem-code" type="text" autocomplete="off" spellcheck="false" placeholder="请输入兑换码" required />
+              </label>
+              <button id="redeem-button" class="primary-button" type="submit">兑换并刷新额度</button>
+            </form>
+            <p id="redeem-result" class="action-result" role="status"></p>
+          </section>
+
+          <section class="setup-panel action-panel">
+            <div class="section-heading">
+              <span class="section-icon alternate" aria-hidden="true">↗</span>
+              <div>
+                <h2>购买兑换码</h2>
+                <p>云猫寄售正在上架，开放后可从这里购买兑换码。</p>
+              </div>
+            </div>
+            <div class="form-grid">
+              <button id="purchase-button" class="primary-button" type="button" disabled>云猫寄售即将上线</button>
+            </div>
+            <p id="purchase-result" class="action-result" role="status">上架完成后，点击按钮打开购买页面；购买后将兑换码填入左侧。</p>
+          </section>
+        </div>
       </section>
 
       <div id="message" class="message" role="status" hidden></div>
