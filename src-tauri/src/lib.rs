@@ -986,7 +986,7 @@ pub fn run() {
             clear_profile,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running New API 客户端");
+        .expect("火灵连接器启动失败");
 }
 
 #[cfg(test)]

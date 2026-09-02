@@ -19,13 +19,13 @@ jobs:
           - name: Linux AppImage
             runner: ubuntu-22.04
             bundle: appimage
-            artifact: upstreamops-client-linux-amd64
-            release_file: UpstreamOps-Client-linux-amd64.AppImage
+            artifact: huoling-connector-linux-amd64
+            release_file: Huoling-Connector-linux-amd64.AppImage
           - name: Windows NSIS
             runner: windows-latest
             bundle: nsis
-            artifact: upstreamops-client-windows-x64
-            release_file: UpstreamOps-Client-windows-x64-setup.exe
+            artifact: huoling-connector-windows-x64
+            release_file: Huoling-Connector-windows-x64-setup.exe
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -87,7 +87,7 @@ jobs:
       - name: Download client artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: upstreamops-client-*
+          pattern: huoling-connector-*
           path: release-artifacts
           merge-multiple: true
 

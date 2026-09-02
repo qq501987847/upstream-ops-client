@@ -113,7 +113,7 @@ let messageTimer
 function invoke(command, args) {
   if (!tauriInvoke) {
     if (developmentMode) return Promise.resolve().then(() => developmentInvoke(command, args))
-    return Promise.reject(new Error("请通过火灵 API 客户端桌面程序打开此页面"))
+    return Promise.reject(new Error("请通过火灵连接器桌面程序打开此页面"))
   }
   return tauriInvoke(command, args)
 }
@@ -392,7 +392,7 @@ async function initialize() {
     elements.purchaseResult.textContent = "开发模式：云猫寄售链接尚未配置。"
   }
   if (!tauriInvoke && !developmentMode) {
-    showMessage("请通过火灵 API 客户端桌面程序打开此页面", true)
+    showMessage("请通过火灵连接器桌面程序打开此页面", true)
     return
   }
   try {
