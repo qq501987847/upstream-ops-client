@@ -1,6 +1,6 @@
 [package]
 name = "upstreamops-workbuddy"
-version = "0.1.6"
+version = "0.1.7"
 description = "火灵连接器桌面客户端"
 edition = "2021"
 
