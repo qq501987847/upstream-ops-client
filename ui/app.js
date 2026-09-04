@@ -117,7 +117,6 @@ const elements = {
   navItems: [...document.querySelectorAll("[data-view]")],
   connectForm: document.querySelector("#connect-form"),
   connectButton: document.querySelector("#connect-button"),
-  baseURL: document.querySelector("#base-url"),
   apiKey: document.querySelector("#api-key"),
   userId: document.querySelector("#user-id"),
   accessToken: document.querySelector("#access-token"),
@@ -127,7 +126,6 @@ const elements = {
   disconnectButton: document.querySelector("#disconnect-button"),
   dashboardKey: document.querySelector("#dashboard-key"),
   dashboardUser: document.querySelector("#dashboard-user"),
-  dashboardBaseURL: document.querySelector("#dashboard-base-url"),
   refreshTime: document.querySelector("#refresh-time"),
   remainingPoints: document.querySelector("#remaining-points"),
   usedPoints: document.querySelector("#used-points"),
@@ -442,8 +440,6 @@ function renderDashboard(dashboard) {
   elements.dashboardUser.textContent = dashboard.userId > 0
     ? `用户 ID ${dashboard.userId} · 系统令牌${dashboard.accessTokenConfigured ? "已保存" : "未配置"}`
     : "用户 ID 未提供"
-  elements.dashboardBaseURL.textContent = dashboard.baseUrl
-  elements.dashboardBaseURL.title = dashboard.baseUrl
   elements.refreshTime.textContent = formatRefreshTime(dashboard.refreshedAt)
   const balance = dashboard.balance || {}
   elements.remainingPoints.textContent = balance.limited ? formatNumber(balance.remaining_points ?? 0) : "不限额"
@@ -496,15 +492,13 @@ async function refresh() {
 
 elements.connectForm.addEventListener("submit", async (event) => {
   event.preventDefault()
-  const baseUrl = elements.baseURL.value.trim()
   const apiKey = elements.apiKey.value.trim()
   const userId = elements.userId.value.trim()
   const accessToken = elements.accessToken.value.trim()
-  if (!baseUrl || !userId || !accessToken) return
+  if (!userId || !accessToken) return
   setBusy(elements.connectButton, true, "连接中…", "连接并获取配置")
   try {
     const dashboard = await invoke("connect", {
-      baseUrl,
       apiKey,
       userId: userId ? Number(userId) : null,
       accessToken: accessToken || null,
@@ -611,7 +605,6 @@ document.addEventListener("visibilitychange", () => {
 async function initialize() {
   elements.developmentBadge.hidden = !developmentMode
   if (developmentMode) {
-    elements.baseURL.value = "http://127.0.0.1:3000"
     elements.apiKey.value = "sk-development"
     elements.userId.value = "10001"
     elements.accessToken.value = "dev-system-token"

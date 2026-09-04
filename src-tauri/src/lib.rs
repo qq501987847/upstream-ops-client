@@ -22,6 +22,10 @@ const MIN_NOTICE_ROTATION_SECONDS: u64 = 3;
 const MAX_NOTICE_ROTATION_SECONDS: u64 = 30;
 const MAX_CLIENT_NOTICES: usize = 3;
 
+/// 客户端内置的默认服务地址：连接器专用域名，与主站 api.fire000.cloud 分离。
+/// 地址变更由服务端 client-config 迁移机制接管。
+const DEFAULT_BASE_URL: &str = "https://wb.fire000.cloud";
+
 #[derive(Clone)]
 struct AppState {
     profile_path: PathBuf,
@@ -464,6 +468,15 @@ fn normalize_base_url(raw: &str) -> Result<String, String> {
         return Err("Base URL 不能包含账号、密码、查询参数或片段".to_string());
     }
     Ok(trimmed.to_string())
+}
+
+/// 连接入口的服务地址解析：为空时回退到内置默认地址，
+/// 之后仍可由服务端 client-config 的迁移配置接管。
+fn resolve_base_url(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return normalize_base_url(DEFAULT_BASE_URL);
+    }
+    normalize_base_url(raw)
 }
 
 fn normalize_external_url(raw: &str) -> Result<String, String> {
@@ -978,7 +991,7 @@ async fn connect(
     access_token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Dashboard, String> {
-    let base_url = normalize_base_url(&base_url)?;
+    let base_url = resolve_base_url(&base_url)?;
     let mut api_key = api_key.trim().to_string();
     let user_id = user_id.unwrap_or_default();
     let access_token = access_token.unwrap_or_default().trim().to_string();
@@ -1280,6 +1293,17 @@ mod tests {
             normalize_base_url("https://example.com///").unwrap(),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn connect_base_url_falls_back_to_builtin_default() {
+        assert_eq!(resolve_base_url("").unwrap(), DEFAULT_BASE_URL);
+        assert_eq!(resolve_base_url("   ").unwrap(), DEFAULT_BASE_URL);
+        assert_eq!(
+            resolve_base_url("http://127.0.0.1:3000/").unwrap(),
+            "http://127.0.0.1:3000"
+        );
+        assert!(resolve_base_url("not a url").is_err());
     }
 
     #[test]

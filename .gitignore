@@ -14,3 +14,9 @@ Thumbs.db
 # Credentials and local profiles
 *.local
 *.secret
+
+# Local build/test artifacts and tool caches
+graphify-out/
+src-tauri/icons/android/
+src-tauri/icons/ios/
+/*.AppImage

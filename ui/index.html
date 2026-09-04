@@ -45,14 +45,10 @@
             <span class="section-icon" aria-hidden="true">⌁</span>
             <div>
               <h1>连接服务</h1>
-              <p id="setup-description">填写服务地址、用户 ID 和系统访问令牌，客户端会自动获取 API Key。</p>
+              <p id="setup-description">填写用户 ID 和系统访问令牌，客户端会自动获取 API Key。</p>
             </div>
           </div>
           <form id="connect-form" class="form-grid">
-            <label>
-              <span>API Base URL</span>
-              <input id="base-url" type="url" inputmode="url" placeholder="https://api.example.com" required />
-            </label>
             <label>
               <span>API Key（自动获取）</span>
               <input id="api-key" type="hidden" autocomplete="off" />
@@ -79,7 +75,6 @@
             <strong id="dashboard-key">-</strong>
             <span id="dashboard-user" class="muted">用户 ID 未提供</span>
           </div>
-          <code id="dashboard-base-url">-</code>
           <span id="refresh-time" class="muted">-</span>
         </div>
 
