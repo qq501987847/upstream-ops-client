@@ -8,6 +8,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::ErrorKind,
+    net::IpAddr,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -15,6 +16,11 @@ use tauri::State;
 
 const PROFILE_OBJECT: &str = "upstream_ops_client_config";
 const PROFILE_VERSION: u32 = 1;
+const CLIENT_CONFIG_VERSION: u32 = 1;
+const DEFAULT_NOTICE_ROTATION_SECONDS: u64 = 6;
+const MIN_NOTICE_ROTATION_SECONDS: u64 = 3;
+const MAX_NOTICE_ROTATION_SECONDS: u64 = 30;
+const MAX_CLIENT_NOTICES: usize = 3;
 
 #[derive(Clone)]
 struct AppState {
@@ -124,6 +130,7 @@ struct ClientProfile {
     available_models: Vec<String>,
     api: ApiEndpoints,
     defaults: RequestDefaults,
+    client_config: ClientConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +148,7 @@ struct Dashboard {
     models: Vec<ClientModel>,
     status: Vec<StatusModel>,
     status_error: Option<String>,
+    client_config: ClientConfig,
     workbuddy_path: String,
     refreshed_at: String,
 }
@@ -199,6 +207,57 @@ struct DisplayConfig {
     quota_per_unit: f64,
     usd_exchange_rate: f64,
     custom_currency_exchange_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct ClientNotice {
+    id: String,
+    enabled: bool,
+    level: String,
+    title: String,
+    content: String,
+    link_url: String,
+    link_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct ClientPromotion {
+    enabled: bool,
+    title: String,
+    description: String,
+    button_text: String,
+    url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct ClientConfig {
+    version: u32,
+    base_url: String,
+    rotation_interval_seconds: u64,
+    notices: Vec<ClientNotice>,
+    promotion: ClientPromotion,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            version: CLIENT_CONFIG_VERSION,
+            base_url: String::new(),
+            rotation_interval_seconds: DEFAULT_NOTICE_ROTATION_SECONDS,
+            notices: Vec::new(),
+            promotion: ClientPromotion::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct PortalClientConfigResponse {
+    success: bool,
+    data: ClientConfig,
 }
 
 impl DisplayConfig {
@@ -407,6 +466,113 @@ fn normalize_base_url(raw: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+fn normalize_external_url(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    let url = Url::parse(trimmed).map_err(|error| format!("外部链接无效：{error}"))?;
+    if url.host_str().is_none() || url.username() != "" || url.password().is_some() {
+        return Err("外部链接必须是无账号密码的绝对地址".to_string());
+    }
+    if url.scheme() == "https" {
+        return Ok(trimmed.to_string());
+    }
+    if url.scheme() != "http" {
+        return Err("外部链接必须使用 HTTPS".to_string());
+    }
+    let host = url.host_str().unwrap_or_default();
+    let is_loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false);
+    if !is_loopback {
+        return Err("非本机外部链接必须使用 HTTPS".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_client_config(mut config: ClientConfig) -> Result<ClientConfig, String> {
+    if config.version == 0 {
+        config.version = CLIENT_CONFIG_VERSION;
+    }
+    if config.version != CLIENT_CONFIG_VERSION {
+        return Err(format!("连接器配置版本 {} 不受支持", config.version));
+    }
+    if config.rotation_interval_seconds == 0 {
+        config.rotation_interval_seconds = DEFAULT_NOTICE_ROTATION_SECONDS;
+    }
+    if !(MIN_NOTICE_ROTATION_SECONDS..=MAX_NOTICE_ROTATION_SECONDS)
+        .contains(&config.rotation_interval_seconds)
+    {
+        return Err(format!(
+            "通知轮播间隔必须在 {MIN_NOTICE_ROTATION_SECONDS} 到 {MAX_NOTICE_ROTATION_SECONDS} 秒之间"
+        ));
+    }
+    if !config.base_url.trim().is_empty() {
+        config.base_url = normalize_base_url(&config.base_url)?;
+    }
+
+    let mut notices = Vec::with_capacity(MAX_CLIENT_NOTICES);
+    for (index, mut notice) in config.notices.into_iter().enumerate() {
+        if notices.len() == MAX_CLIENT_NOTICES {
+            break;
+        }
+        notice.id = notice.id.trim().to_string();
+        if notice.id.is_empty() {
+            notice.id = format!("notice-{}", index + 1);
+        }
+        notice.level = match notice.level.trim().to_ascii_lowercase().as_str() {
+            "warning" => "warning".to_string(),
+            "critical" => "critical".to_string(),
+            _ => "info".to_string(),
+        };
+        notice.title = notice.title.trim().to_string();
+        notice.content = notice.content.trim().to_string();
+        notice.link_text = notice.link_text.trim().to_string();
+        notice.link_url = normalize_external_url(&notice.link_url).unwrap_or_default();
+        if notice.link_url.is_empty() {
+            notice.link_text.clear();
+        }
+        if notice.enabled && !notice.title.is_empty() {
+            notices.push(notice);
+        }
+    }
+    config.notices = notices;
+
+    config.promotion.title = config.promotion.title.trim().to_string();
+    config.promotion.description = config.promotion.description.trim().to_string();
+    config.promotion.button_text = config.promotion.button_text.trim().to_string();
+    config.promotion.url = normalize_external_url(&config.promotion.url).unwrap_or_default();
+    if !config.promotion.enabled
+        || config.promotion.title.is_empty()
+        || config.promotion.button_text.is_empty()
+        || config.promotion.url.is_empty()
+    {
+        config.promotion = ClientPromotion::default();
+    }
+    Ok(config)
+}
+
+fn migration_target(
+    current_base_url: &str,
+    config: &ClientConfig,
+) -> Result<Option<String>, String> {
+    if config.base_url.is_empty() {
+        return Ok(None);
+    }
+    let current = Url::parse(current_base_url).map_err(|error| error.to_string())?;
+    let target = Url::parse(&config.base_url).map_err(|error| error.to_string())?;
+    if current.as_str().trim_end_matches('/') == target.as_str().trim_end_matches('/') {
+        return Ok(None);
+    }
+    if current.scheme() == "https" && target.scheme() != "https" {
+        return Err("拒绝把 HTTPS 服务地址自动降级为 HTTP".to_string());
+    }
+    Ok(Some(config.base_url.clone()))
+}
+
 fn endpoint(base_url: &str, path: &str) -> String {
     format!("{}{}", base_url.trim_end_matches('/'), path)
 }
@@ -459,6 +625,7 @@ fn profile_from_account(
     access_token: String,
     payload: Value,
     display_config: &DisplayConfig,
+    client_config: ClientConfig,
 ) -> Result<ClientProfile, String> {
     if payload.get("success").and_then(Value::as_bool) == Some(false) {
         return Err("账户认证失败，请检查服务地址和访问凭据".to_string());
@@ -504,6 +671,7 @@ fn profile_from_account(
             anthropic_messages: "/v1/messages".to_string(),
         },
         defaults: RequestDefaults::default(),
+        client_config,
     };
     canonicalize_profile(&mut profile)?;
     Ok(profile)
@@ -522,6 +690,55 @@ async fn fetch_display_config(http: &Client, base_url: &str) -> Result<DisplayCo
     let payload: Value = get_json(http, &endpoint(base_url, "/api/status"), None).await?;
     let data = payload.get("data").cloned().unwrap_or(payload);
     serde_json::from_value(data).map_err(|error| format!("展示配置格式无效：{error}"))
+}
+
+async fn fetch_client_config(http: &Client, base_url: &str) -> Result<ClientConfig, String> {
+    let payload: PortalClientConfigResponse =
+        get_json(http, &endpoint(base_url, "/v1/portal/client-config"), None).await?;
+    if !payload.success {
+        return Err("服务未返回有效的连接器配置".to_string());
+    }
+    normalize_client_config(payload.data)
+}
+
+async fn resolve_client_config(
+    http: &Client,
+    current_base_url: &str,
+    cached_config: &ClientConfig,
+) -> (String, ClientConfig, Option<String>) {
+    let fallback_config = normalize_client_config(cached_config.clone()).unwrap_or_default();
+    let current = match normalize_base_url(current_base_url) {
+        Ok(value) => value,
+        Err(error) => return (current_base_url.to_string(), fallback_config, Some(error)),
+    };
+    let config = match fetch_client_config(http, &current).await {
+        Ok(value) => value,
+        Err(_) => return (current, fallback_config, None),
+    };
+    let target = match migration_target(&current, &config) {
+        Ok(Some(value)) => value,
+        Ok(None) => return (current, config, None),
+        Err(error) => return (current, config, Some(error)),
+    };
+
+    let target_config = match fetch_client_config(http, &target).await {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                current,
+                config,
+                Some(format!("新服务地址验证失败，仍使用原地址：{error}")),
+            )
+        }
+    };
+    if !target_config.base_url.is_empty() && target_config.base_url != target {
+        return (
+            current,
+            config,
+            Some("新服务地址返回了不一致的迁移配置，仍使用原地址".to_string()),
+        );
+    }
+    (target, target_config, None)
 }
 
 async fn bootstrap_api_key(
@@ -562,6 +779,17 @@ fn client() -> Result<Client, String> {
     Client::builder()
         .user_agent("upstreamops-workbuddy/0.1")
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("重定向次数过多");
+            }
+            if attempt.previous().iter().any(|url| url.scheme() == "https")
+                && attempt.url().scheme() != "https"
+            {
+                return attempt.error("拒绝把 HTTPS 请求重定向到不安全协议");
+            }
+            attempt.follow()
+        }))
         .build()
         .map_err(|error| format!("初始化网络客户端失败：{error}"))
 }
@@ -614,6 +842,7 @@ fn profile_to_dashboard(
         models: profile.models.clone(),
         status,
         status_error,
+        client_config: profile.client_config.clone(),
         workbuddy_path: workbuddy_path().display().to_string(),
         refreshed_at: now_marker(),
     }
@@ -757,6 +986,8 @@ async fn connect(
         return Err("请输入 API Key，或同时填写用户 ID和系统访问令牌".to_string());
     }
     let http = client()?;
+    let (base_url, client_config, config_error) =
+        resolve_client_config(&http, &base_url, &ClientConfig::default()).await;
     if api_key.is_empty() {
         api_key = bootstrap_api_key(&http, &base_url, user_id, &access_token).await?;
     }
@@ -783,9 +1014,10 @@ async fn connect(
         },
         payload,
         &display_config,
+        client_config,
     )?;
     save_profile_at(&state.profile_path, &profile)?;
-    Ok(profile_to_dashboard(&profile, Vec::new(), None))
+    Ok(profile_to_dashboard(&profile, Vec::new(), config_error))
 }
 
 #[tauri::command]
@@ -818,6 +1050,8 @@ async fn refresh_dashboard(state: State<'_, AppState>) -> Result<Dashboard, Stri
     let http = client()?;
 
     let base_url = normalize_base_url(&current.base_url)?;
+    let (base_url, client_config, config_error) =
+        resolve_client_config(&http, &base_url, &current.client_config).await;
     let api_key = current.api_key.trim().to_string();
     let display_config = fetch_display_config(&http, &base_url)
         .await
@@ -830,6 +1064,7 @@ async fn refresh_dashboard(state: State<'_, AppState>) -> Result<Dashboard, Stri
         current.access_token,
         payload,
         &display_config,
+        client_config,
     )?;
 
     let (status, status_error) = match get_json::<StatusResponse>(
@@ -843,9 +1078,22 @@ async fn refresh_dashboard(state: State<'_, AppState>) -> Result<Dashboard, Stri
         Err(error) => (Vec::new(), Some(error)),
     };
 
+    let status_error = [config_error, status_error]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("；");
     profile.generated_at = now_marker();
     save_profile_at(&state.profile_path, &profile)?;
-    Ok(profile_to_dashboard(&profile, status, status_error))
+    Ok(profile_to_dashboard(
+        &profile,
+        status,
+        if status_error.is_empty() {
+            None
+        } else {
+            Some(status_error)
+        },
+    ))
 }
 
 #[tauri::command]
@@ -1061,6 +1309,7 @@ mod tests {
             "system-token".to_string(),
             payload,
             &display_config,
+            ClientConfig::default(),
         )
         .unwrap();
         assert_eq!(profile.balance.quota_points, Some(1200.0));
@@ -1094,6 +1343,70 @@ mod tests {
             "https://new-api.example.com/v1/chat/completions"
         );
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn connector_config_keeps_only_three_enabled_valid_notices() {
+        let config = normalize_client_config(ClientConfig {
+            notices: vec![
+                ClientNotice {
+                    enabled: false,
+                    title: "Draft".to_string(),
+                    ..Default::default()
+                },
+                ClientNotice {
+                    enabled: true,
+                    level: "warning".to_string(),
+                    title: " One ".to_string(),
+                    ..Default::default()
+                },
+                ClientNotice {
+                    enabled: true,
+                    level: "unknown".to_string(),
+                    title: "Two".to_string(),
+                    link_url: "javascript:alert(1)".to_string(),
+                    link_text: "Unsafe".to_string(),
+                    ..Default::default()
+                },
+                ClientNotice {
+                    enabled: true,
+                    title: "Three".to_string(),
+                    ..Default::default()
+                },
+                ClientNotice {
+                    enabled: true,
+                    title: "Four".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(config.notices.len(), 3);
+        assert_eq!(config.notices[0].title, "One");
+        assert_eq!(config.notices[1].level, "info");
+        assert!(config.notices[1].link_url.is_empty());
+        assert!(config.notices[1].link_text.is_empty());
+        assert_eq!(config.notices[2].title, "Three");
+    }
+
+    #[test]
+    fn connector_migration_never_downgrades_https() {
+        let insecure = ClientConfig {
+            base_url: "http://api.example.com".to_string(),
+            ..Default::default()
+        };
+        assert!(migration_target("https://old.example.com", &insecure).is_err());
+
+        let secure = ClientConfig {
+            base_url: "https://api.example.com".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            migration_target("https://old.example.com", &secure).unwrap(),
+            Some("https://api.example.com".to_string())
+        );
     }
 
     #[test]

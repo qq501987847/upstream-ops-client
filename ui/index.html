@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>火灵连接器</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -15,6 +16,15 @@
           <strong>火灵连接器</strong>
           <span id="connection-label">未连接</span>
         </div>
+      </div>
+      <div id="notice-carousel" class="notice-carousel" role="region" aria-live="polite" aria-label="服务通知" hidden>
+        <button id="notice-previous" class="notice-nav-button" type="button" aria-label="上一条通知">‹</button>
+        <button id="notice-trigger" class="notice-trigger" type="button">
+          <span id="notice-level" class="notice-level" aria-hidden="true"></span>
+          <span id="notice-title" class="notice-title"></span>
+          <span id="notice-count" class="notice-count"></span>
+        </button>
+        <button id="notice-next" class="notice-nav-button" type="button" aria-label="下一条通知">›</button>
       </div>
       <nav class="primary-nav" aria-label="主菜单">
         <button class="nav-item active" type="button" data-view="home">主页</button>
@@ -137,7 +147,7 @@
           </div>
         </div>
 
-        <div class="recharge-grid">
+        <div id="recharge-grid" class="recharge-grid">
           <section class="setup-panel action-panel">
             <div class="section-heading">
               <span class="section-icon" aria-hidden="true">⌁</span>
@@ -156,24 +166,36 @@
             <p id="redeem-result" class="action-result" role="status"></p>
           </section>
 
-          <section class="setup-panel action-panel">
+          <section id="promotion-panel" class="setup-panel action-panel" hidden>
             <div class="section-heading">
               <span class="section-icon alternate" aria-hidden="true">↗</span>
               <div>
-                <h2>购买兑换码</h2>
-                <p>云猫寄售正在上架，开放后可从这里购买兑换码。</p>
+                <h2 id="promotion-title">官方购买</h2>
+                <p id="promotion-description"></p>
               </div>
             </div>
             <div class="form-grid">
-              <button id="purchase-button" class="primary-button" type="button" disabled>云猫寄售即将上线</button>
+              <button id="purchase-button" class="primary-button" type="button" disabled>前往购买</button>
             </div>
-            <p id="purchase-result" class="action-result" role="status">上架完成后，点击按钮打开购买页面；购买后将兑换码填入左侧。</p>
+            <p id="purchase-result" class="action-result" role="status"></p>
           </section>
         </div>
       </section>
 
       <div id="message" class="message" role="status" hidden></div>
     </main>
+
+    <dialog id="notice-dialog" class="notice-dialog" aria-labelledby="notice-dialog-title">
+      <div class="notice-dialog-header">
+        <span id="notice-dialog-level" class="notice-dialog-level">服务通知</span>
+        <form method="dialog">
+          <button class="notice-dialog-close" type="submit" aria-label="关闭通知">×</button>
+        </form>
+      </div>
+      <h2 id="notice-dialog-title"></h2>
+      <p id="notice-dialog-content"></p>
+      <button id="notice-dialog-link" class="primary-button notice-dialog-link" type="button" hidden>查看详情</button>
+    </dialog>
 
     <script src="./app.js"></script>
   </body>

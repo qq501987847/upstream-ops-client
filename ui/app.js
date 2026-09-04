@@ -27,6 +27,47 @@ function developmentDashboard(baseUrl = "http://127.0.0.1:3000", apiKey = "sk-de
     statusError: null,
     workbuddyPath: "开发模式不会写入本机 WorkBuddy 配置",
     refreshedAt: `unix:${Math.floor(Date.now() / 1000)}`,
+    clientConfig: {
+      version: 1,
+      base_url: "",
+      rotation_interval_seconds: 5,
+      notices: [
+        {
+          id: "dev-info",
+          enabled: true,
+          level: "info",
+          title: "火灵连接器现已支持顶部通知轮播",
+          content: "管理员可以在管理后台选择最多三条通知，并设置通知详情与外部链接。",
+          link_url: "",
+          link_text: "",
+        },
+        {
+          id: "dev-warning",
+          enabled: true,
+          level: "warning",
+          title: "服务维护时间：今晚 23:00 至 23:30",
+          content: "维护期间可能出现短暂请求失败，请稍后重试。",
+          link_url: "",
+          link_text: "",
+        },
+        {
+          id: "dev-critical",
+          enabled: true,
+          level: "critical",
+          title: "域名迁移演示通知",
+          content: "生产环境会先验证新服务地址，再迁移本地配置。",
+          link_url: "",
+          link_text: "",
+        },
+      ],
+      promotion: {
+        enabled: true,
+        title: "官方兑换码小铺",
+        description: "购买后将兑换码填入左侧，即可为当前账户增加额度。",
+        button_text: "前往小铺购买",
+        url: "https://example.com",
+      },
+    },
   }
 }
 
@@ -100,15 +141,36 @@ const elements = {
   workbuddyResult: document.querySelector("#workbuddy-result"),
   message: document.querySelector("#message"),
   developmentBadge: document.querySelector("#development-badge"),
+  noticeCarousel: document.querySelector("#notice-carousel"),
+  noticePrevious: document.querySelector("#notice-previous"),
+  noticeNext: document.querySelector("#notice-next"),
+  noticeTrigger: document.querySelector("#notice-trigger"),
+  noticeLevel: document.querySelector("#notice-level"),
+  noticeTitle: document.querySelector("#notice-title"),
+  noticeCount: document.querySelector("#notice-count"),
+  noticeDialog: document.querySelector("#notice-dialog"),
+  noticeDialogLevel: document.querySelector("#notice-dialog-level"),
+  noticeDialogTitle: document.querySelector("#notice-dialog-title"),
+  noticeDialogContent: document.querySelector("#notice-dialog-content"),
+  noticeDialogLink: document.querySelector("#notice-dialog-link"),
   redeemForm: document.querySelector("#redeem-form"),
   redeemCode: document.querySelector("#redeem-code"),
   redeemButton: document.querySelector("#redeem-button"),
   redeemResult: document.querySelector("#redeem-result"),
   purchaseButton: document.querySelector("#purchase-button"),
   purchaseResult: document.querySelector("#purchase-result"),
+  rechargeGrid: document.querySelector("#recharge-grid"),
+  promotionPanel: document.querySelector("#promotion-panel"),
+  promotionTitle: document.querySelector("#promotion-title"),
+  promotionDescription: document.querySelector("#promotion-description"),
 }
 
 let messageTimer
+let noticeTimer
+let noticeItems = []
+let noticeIndex = 0
+let noticeRotationMilliseconds = 6000
+let activeNoticeLink = ""
 
 function invoke(command, args) {
   if (!tauriInvoke) {
@@ -137,6 +199,143 @@ function errorText(error) {
   if (typeof error === "string") return error
   if (error instanceof Error) return error.message
   return "操作失败，请稍后重试"
+}
+
+function validExternalURL(raw) {
+  if (!raw) return ""
+  try {
+    const url = new URL(String(raw).trim())
+    if (url.username || url.password) return ""
+    if (url.protocol === "https:") return url.href
+    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase()
+    const localHTTP = url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(hostname)
+    return localHTTP ? url.href : ""
+  } catch {
+    return ""
+  }
+}
+
+function openExternalURL(raw) {
+  const url = validExternalURL(raw)
+  if (!url) return false
+  window.open(url, "_blank", "noopener,noreferrer")
+  return true
+}
+
+function stopNoticeRotation() {
+  window.clearInterval(noticeTimer)
+  noticeTimer = undefined
+}
+
+function renderNotice() {
+  const notice = noticeItems[noticeIndex]
+  if (!notice) {
+    elements.noticeCarousel.hidden = true
+    return
+  }
+  const level = ["warning", "critical"].includes(notice.level) ? notice.level : "info"
+  elements.noticeCarousel.hidden = false
+  elements.noticeCarousel.dataset.level = level
+  elements.noticeLevel.className = `notice-level ${level}`
+  elements.noticeTitle.textContent = notice.title
+  elements.noticeCount.textContent = noticeItems.length > 1 ? `${noticeIndex + 1}/${noticeItems.length}` : ""
+  elements.noticeTrigger.setAttribute("aria-label", `打开通知：${notice.title}`)
+  elements.noticePrevious.hidden = noticeItems.length < 2
+  elements.noticeNext.hidden = noticeItems.length < 2
+  elements.noticeTrigger.classList.remove("notice-enter")
+  window.requestAnimationFrame(() => elements.noticeTrigger.classList.add("notice-enter"))
+}
+
+function moveNotice(offset) {
+  if (noticeItems.length < 2) return
+  noticeIndex = (noticeIndex + offset + noticeItems.length) % noticeItems.length
+  renderNotice()
+}
+
+function startNoticeRotation() {
+  stopNoticeRotation()
+  if (
+    noticeItems.length < 2 ||
+    document.hidden ||
+    elements.noticeDialog.open ||
+    elements.noticeCarousel.matches(":hover") ||
+    elements.noticeCarousel.contains(document.activeElement)
+  ) return
+  noticeTimer = window.setInterval(() => moveNotice(1), noticeRotationMilliseconds)
+}
+
+function noticeLevelLabel(level) {
+  if (level === "critical") return "紧急通知"
+  if (level === "warning") return "重要通知"
+  return "服务通知"
+}
+
+function openNoticeDialog() {
+  const notice = noticeItems[noticeIndex]
+  if (!notice) return
+  if (elements.noticeDialog.open) return
+  stopNoticeRotation()
+  elements.noticeDialog.dataset.level = notice.level || "info"
+  elements.noticeDialogLevel.textContent = noticeLevelLabel(notice.level)
+  elements.noticeDialogTitle.textContent = notice.title
+  elements.noticeDialogContent.textContent = notice.content || "暂无更多说明。"
+  activeNoticeLink = validExternalURL(notice.link_url)
+  elements.noticeDialogLink.hidden = !activeNoticeLink
+  elements.noticeDialogLink.textContent = notice.link_text || "查看详情"
+  if (typeof elements.noticeDialog.showModal === "function") {
+    elements.noticeDialog.showModal()
+  } else {
+    elements.noticeDialog.setAttribute("open", "")
+  }
+}
+
+function applyClientConfig(config = {}) {
+  const activeNoticeID = noticeItems[noticeIndex]?.id
+  const configuredNotices = Array.isArray(config.notices) ? config.notices : []
+  noticeItems = configuredNotices
+    .filter((item) => item && item.enabled !== false && String(item.title || "").trim())
+    .slice(0, 3)
+    .map((item, index) => ({
+      id: String(item.id || `notice-${index + 1}`),
+      level: String(item.level || "info"),
+      title: String(item.title || "").trim(),
+      content: String(item.content || "").trim(),
+      link_url: validExternalURL(item.link_url),
+      link_text: String(item.link_text || "").trim(),
+    }))
+  const interval = Number(config.rotation_interval_seconds)
+  noticeRotationMilliseconds = Number.isInteger(interval) && interval >= 3 && interval <= 30
+    ? interval * 1000
+    : 6000
+  const preservedIndex = noticeItems.findIndex(
+    (item) => item.id === activeNoticeID
+  )
+  noticeIndex = preservedIndex >= 0 ? preservedIndex : 0
+  renderNotice()
+  startNoticeRotation()
+
+  const promotion = config.promotion || {}
+  const promotionURL = validExternalURL(promotion.url)
+  const promotionEnabled = Boolean(
+    promotion.enabled && promotionURL && String(promotion.title || "").trim() && String(promotion.button_text || "").trim(),
+  )
+  elements.promotionPanel.hidden = !promotionEnabled
+  elements.rechargeGrid.classList.toggle("single-column", !promotionEnabled)
+  if (!promotionEnabled) {
+    elements.purchaseButton.disabled = true
+    elements.purchaseButton.dataset.url = ""
+    elements.promotionTitle.textContent = "官方购买"
+    elements.promotionDescription.textContent = ""
+    elements.purchaseButton.textContent = "前往购买"
+    elements.purchaseResult.textContent = ""
+    return
+  }
+  elements.promotionTitle.textContent = String(promotion.title).trim()
+  elements.promotionDescription.textContent = String(promotion.description || "").trim()
+  elements.purchaseButton.textContent = String(promotion.button_text).trim()
+  elements.purchaseButton.dataset.url = promotionURL
+  elements.purchaseButton.disabled = false
+  elements.purchaseResult.textContent = "将在默认浏览器中打开购买页面。"
 }
 
 function formatNumber(value, maximumFractionDigits = 2) {
@@ -256,6 +455,7 @@ function renderDashboard(dashboard) {
   elements.modelWarning.hidden = warnings.length === 0
   elements.modelWarning.textContent = warnings.join("；")
   elements.workbuddyPath.textContent = dashboard.workbuddyPath
+  applyClientConfig(dashboard.clientConfig)
   renderModels(dashboard.models, dashboard.status)
 }
 
@@ -268,6 +468,7 @@ function showSetup() {
   elements.refreshButton.hidden = true
   elements.disconnectButton.hidden = true
   elements.connectionLabel.textContent = "未连接"
+  applyClientConfig()
   if (!developmentMode) elements.apiKey.value = ""
   elements.workbuddyResult.textContent = ""
 }
@@ -374,11 +575,37 @@ elements.redeemForm.addEventListener("submit", async (event) => {
 
 elements.purchaseButton.addEventListener("click", () => {
   const shopUrl = elements.purchaseButton.dataset.url?.trim()
-  if (!shopUrl) {
-    elements.purchaseResult.textContent = "云猫寄售正在上架，购买链接开放后会显示在这里。"
+  if (!openExternalURL(shopUrl)) {
+    elements.purchaseResult.textContent = "购买链接无效，请联系管理员。"
     return
   }
-  window.open(shopUrl, "_blank", "noopener,noreferrer")
+  elements.purchaseResult.textContent = "已在默认浏览器中打开购买页面。"
+})
+
+elements.noticePrevious.addEventListener("click", () => {
+  moveNotice(-1)
+  startNoticeRotation()
+})
+
+elements.noticeNext.addEventListener("click", () => {
+  moveNotice(1)
+  startNoticeRotation()
+})
+
+elements.noticeTrigger.addEventListener("click", openNoticeDialog)
+elements.noticeDialogLink.addEventListener("click", () => {
+  if (!openExternalURL(activeNoticeLink)) {
+    showMessage("通知链接无效，请联系管理员。", true)
+  }
+})
+elements.noticeDialog.addEventListener("close", startNoticeRotation)
+elements.noticeCarousel.addEventListener("mouseenter", stopNoticeRotation)
+elements.noticeCarousel.addEventListener("mouseleave", startNoticeRotation)
+elements.noticeCarousel.addEventListener("focusin", stopNoticeRotation)
+elements.noticeCarousel.addEventListener("focusout", startNoticeRotation)
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopNoticeRotation()
+  else startNoticeRotation()
 })
 
 async function initialize() {
@@ -389,7 +616,6 @@ async function initialize() {
     elements.userId.value = "10001"
     elements.accessToken.value = "dev-system-token"
     elements.setupDescription.textContent = "已启用本地模拟数据，可直接点击连接验证获取配置流程。"
-    elements.purchaseResult.textContent = "开发模式：云猫寄售链接尚未配置。"
   }
   if (!tauriInvoke && !developmentMode) {
     showMessage("请通过火灵连接器桌面程序打开此页面", true)

@@ -8,7 +8,9 @@
 - 展示剩余/已用额度、累计请求和近 24 小时请求
 - 获取当前账户可用模型并支持逐模型实际连通测试
 - 提供“主页”和“充值与兑换”菜单
-- 充值页预留云猫寄售购买入口；链接上架后打开外部购买页面获取兑换码
+- 从管理后台读取最多 3 条顶部通知，按配置间隔轮播，悬停或聚焦时暂停
+- 充值页可展示管理员配置的官方小铺或活动入口；未启用时整块隐藏
+- 支持服务地址安全迁移：先验证新地址的连接器配置接口，且禁止 HTTPS 自动降级为 HTTP
 - 使用预创建账户的用户 ID 和系统访问令牌自动领取 API Key
 - 云猫购买普通兑换码后，通过系统令牌调用 New API 普通充值接口增加账户额度
 - 合并写入 WorkBuddy 的 `models.json`，同 ID 模型更新，其他模型和未知字段保留
@@ -23,6 +25,7 @@ WorkBuddy 使用 OpenAI Chat Completions 格式，因此写入的是完整的 `<
 - `GET /v1/portal/account`：读取账户、额度和模型
 - `POST /v1/portal/bootstrap`：使用预创建账户的用户 ID 和系统访问令牌领取 Portal API Key
 - `GET /v1/portal/status`：读取服务状态
+- `GET /v1/portal/client-config`：读取通知、充值页运营位和服务地址迁移配置
 - `POST /api/user/topup`：使用系统访问令牌兑换普通兑换码并增加用户额度
 - `POST /v1/chat/completions`：模型连通测试
 
