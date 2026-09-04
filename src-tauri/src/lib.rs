@@ -985,13 +985,13 @@ fn import_workbuddy_file(profile: &ClientProfile, path: &Path) -> Result<ImportR
 
 #[tauri::command]
 async fn connect(
-    base_url: String,
+    base_url: Option<String>,
     api_key: String,
     user_id: Option<i64>,
     access_token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Dashboard, String> {
-    let base_url = resolve_base_url(&base_url)?;
+    let base_url = resolve_base_url(base_url.as_deref().unwrap_or(""))?;
     let mut api_key = api_key.trim().to_string();
     let user_id = user_id.unwrap_or_default();
     let access_token = access_token.unwrap_or_default().trim().to_string();
