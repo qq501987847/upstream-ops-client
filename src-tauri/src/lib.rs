@@ -265,6 +265,17 @@ struct PortalClientConfigResponse {
 }
 
 impl DisplayConfig {
+    /// 火灵业务默认：服务端未提供展示配置时（如连接器专用精简后端），
+    /// 按 1 单位余额 = 600 积分展示；服务端配置存在时以服务端为准。
+    fn huoling_default() -> Self {
+        Self {
+            quota_display_type: "CUSTOM".to_string(),
+            quota_per_unit: 500_000.0,
+            usd_exchange_rate: 0.0,
+            custom_currency_exchange_rate: 600.0,
+        }
+    }
+
     fn factor(&self) -> f64 {
         let quota_per_unit = if self.quota_per_unit > 0.0 {
             self.quota_per_unit
@@ -1009,7 +1020,7 @@ async fn connect(
     }
     let display_config = fetch_display_config(&http, &base_url)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|_| DisplayConfig::huoling_default());
     let payload = fetch_account(&http, &base_url, &api_key).await?;
     let (stored_user_id, stored_access_token) = read_profile_at(&state.profile_path)
         .ok()
@@ -1031,6 +1042,25 @@ async fn connect(
     )?;
     save_profile_at(&state.profile_path, &profile)?;
     Ok(profile_to_dashboard(&profile, Vec::new(), config_error))
+}
+
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    let url = normalize_external_url(&url)?;
+    if url.is_empty() {
+        return Err("外部链接为空".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    let opened = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let opened = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let opened = std::process::Command::new("xdg-open").arg(&url).spawn();
+    opened
+        .map(|_| ())
+        .map_err(|error| format!("打开链接失败：{error}"))
 }
 
 #[tauri::command]
@@ -1068,7 +1098,7 @@ async fn refresh_dashboard(state: State<'_, AppState>) -> Result<Dashboard, Stri
     let api_key = current.api_key.trim().to_string();
     let display_config = fetch_display_config(&http, &base_url)
         .await
-        .unwrap_or_default();
+        .unwrap_or_else(|_| DisplayConfig::huoling_default());
     let payload = fetch_account(&http, &base_url, &api_key).await?;
     let mut profile = profile_from_account(
         base_url,
@@ -1245,6 +1275,7 @@ pub fn run() {
             redeem_code,
             import_workbuddy,
             clear_profile,
+            open_external,
         ])
         .run(tauri::generate_context!())
         .expect("火灵连接器启动失败");
@@ -1293,6 +1324,14 @@ mod tests {
             normalize_base_url("https://example.com///").unwrap(),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn huoling_display_fallback_shows_600_points_per_unit() {
+        let config = DisplayConfig::huoling_default();
+        assert!((config.points_per_usd() - 600.0).abs() < 1e-9);
+        // 余额 1（原始额度 500_000）应显示为 600 积分
+        assert_eq!(500_000.0 * config.factor(), 600.0);
     }
 
     #[test]

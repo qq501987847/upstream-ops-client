@@ -213,9 +213,17 @@ function validExternalURL(raw) {
   }
 }
 
-function openExternalURL(raw) {
+async function openExternalURL(raw) {
   const url = validExternalURL(raw)
   if (!url) return false
+  if (tauriInvoke) {
+    try {
+      await tauriInvoke("open_external", { url })
+      return true
+    } catch (error) {
+      return false
+    }
+  }
   window.open(url, "_blank", "noopener,noreferrer")
   return true
 }
@@ -567,9 +575,9 @@ elements.redeemForm.addEventListener("submit", async (event) => {
   }
 })
 
-elements.purchaseButton.addEventListener("click", () => {
+elements.purchaseButton.addEventListener("click", async () => {
   const shopUrl = elements.purchaseButton.dataset.url?.trim()
-  if (!openExternalURL(shopUrl)) {
+  if (!(await openExternalURL(shopUrl))) {
     elements.purchaseResult.textContent = "购买链接无效，请联系管理员。"
     return
   }
@@ -587,8 +595,8 @@ elements.noticeNext.addEventListener("click", () => {
 })
 
 elements.noticeTrigger.addEventListener("click", openNoticeDialog)
-elements.noticeDialogLink.addEventListener("click", () => {
-  if (!openExternalURL(activeNoticeLink)) {
+elements.noticeDialogLink.addEventListener("click", async () => {
+  if (!(await openExternalURL(activeNoticeLink))) {
     showMessage("通知链接无效，请联系管理员。", true)
   }
 })
